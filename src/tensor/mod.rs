@@ -12,7 +12,7 @@ pub enum Device {
 #[derive(Debug, Clone)]
 pub enum Storage {
     Cpu(Vec<f32>),
-    //TODO: add more storage (Metal, CUDA, wgpu)
+    //TODO: add more storage (Metal, CUDA, wgpu) (20261014-114506)
 }
 
 impl PartialEq<Vec<f32>> for Storage {
@@ -77,7 +77,7 @@ impl Tensor {
         let num_elements: usize = shape.iter().product();
         let storage = match device {
             Device::Cpu => Storage::Cpu(data),
-            //TODO: Update once more storage options are implemented
+            //TODO: Update once more storage options are implemented (20261014-114506)
         };
 
         Ok(Self {
@@ -98,7 +98,7 @@ impl Tensor {
         let num_elements: usize = shape.iter().product();
         let storage = match device {
             Device::Cpu => Storage::Cpu(vec![0.0; num_elements]),
-            //TODO: Update once more storage options are implemented
+            //TODO: Update once more storage options are implemented (20261014-114506)
         };
 
         Ok(Self {
