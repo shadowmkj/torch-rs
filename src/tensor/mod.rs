@@ -1,8 +1,9 @@
 pub mod error;
 
-use rand_distr::{Distribution, Normal};
+use rand_distr::{Distribution, Normal, Uniform};
 
 use crate::tensor::error::TensorError;
+use std::fmt;
 use std::sync::Arc;
 
 /// Hardware execution device for tensor storage and compute kernels.
@@ -48,51 +49,56 @@ pub struct Tensor<const D: usize> {
 }
 
 impl<const D: usize> Tensor<D> {
-    /// Computes canonical row-major (C-contiguous) strides for the given shape.
-    fn compute_strides(shape: &[usize; D]) -> Result<[usize; D], TensorError> {
-        //WARN: No support for 0-sized dimensions. (shapes with 0 in it)
-        // eg: creating a tensor with shape [2,0,3] will result in runtime error, 0 must NOT be in
-        // shape.
-        // This is to make development of Tensor methods easier and reduce edge cases involving 0
-
-        //TODO: remove this check after supporting 0-sized dimensions (20261015-130759)
-        if shape.contains(&0) {
-            return Err(TensorError::ZeroSizedDimension {
-                shape: shape.to_vec(),
-            });
-        }
-
-        let mut strides = [1; D];
-        if D > 1 {
-            for i in (0..D - 1).rev() {
-                strides[i] = strides[i + 1] * shape[i + 1];
-            } //NOTE: refer ./tasks/20261014-021101/strides.png
-        }
-
-        Ok(strides)
-    }
-
-    /// Computes the 1D flat storage offset corresponding to the given multi-dimensional coordinate indices.
+    /// Creates a new tensor of the given shape filled with zeros (`0.0`).
     ///
     /// # Errors
     ///
-    /// Returns [`TensorError::IndexOutOfBounds`] if any coordinate is greater than or equal to
-    /// the dimension size along that axis.
-    pub fn linear_index(&self, indices: [usize; D]) -> Result<usize, TensorError> {
-        let mut flat_index = self.offset;
-        // index is the actual value, i is the axis
-        for (i, &index) in indices.iter().enumerate().take(D) {
-            if index >= self.shape[i] {
-                return Err(TensorError::IndexOutOfBounds {
-                    axis: i,
-                    index: index,
-                    size: self.shape[i],
-                });
-            }
-            flat_index += index * self.strides[i];
-        }
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn zeros(shape: [usize; D]) -> Result<Self, TensorError> {
+        let strides = Self::compute_strides(&shape)?;
 
-        Ok(flat_index)
+        // let device = device.unwrap_or_default(); //uncomment this
+        // For now just use CPU as default
+        let device = Device::default(); //TODO: Must change this back when designing the public API
+        let num_elements: usize = shape.iter().product();
+        let storage = match device {
+            Device::Cpu => Storage::Cpu(vec![0.0; num_elements]),
+            //TODO: Update once more storage options are implemented (20261014-114506)
+        };
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            shape,
+            offset: 0,
+            strides,
+            device,
+        })
+    }
+
+    /// Creates a new tensor of the given shape filled with ones (`1.0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn ones(shape: [usize; D]) -> Result<Self, TensorError> {
+        let strides = Self::compute_strides(&shape)?;
+
+        // let device = device.unwrap_or_default(); //uncomment this
+        // For now just use CPU as default
+        let device = Device::default(); //TODO: Must change this back when designing the public API
+        let num_elements: usize = shape.iter().product();
+        let storage = match device {
+            Device::Cpu => Storage::Cpu(vec![1.0; num_elements]),
+            //TODO: Update once more storage options are implemented (20261014-114506)
+        };
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            shape,
+            offset: 0,
+            strides,
+            device,
+        })
     }
 
     /// Creates a new tensor from an owned vector of `f32` elements with the specified shape.
@@ -170,46 +176,74 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
-    /// Creates a new tensor of the given shape filled with ones (`1.0`).
+    /// Creates a new tensor of the given shape filled with uniform random values in `[0.0, 1.0)`.
     ///
     /// # Errors
     ///
     /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
-    pub fn ones(shape: [usize; D]) -> Result<Self, TensorError> {
-        let strides = Self::compute_strides(&shape)?;
-
-        // let device = device.unwrap_or_default(); //uncomment this
-        // For now just use CPU as default
-        let device = Device::default(); //TODO: Must change this back when designing the public API
-        let num_elements: usize = shape.iter().product();
-        let storage = match device {
-            Device::Cpu => Storage::Cpu(vec![1.0; num_elements]),
-            //TODO: Update once more storage options are implemented (20261014-114506)
-        };
-
-        Ok(Self {
-            storage: Arc::new(storage),
-            shape,
-            offset: 0,
-            strides,
-            device,
-        })
+    pub fn rand(shape: [usize; D]) -> Result<Self, TensorError> {
+        Self::uniform(0.0, 1.0, shape)
     }
 
-    /// Creates a new tensor of the given shape filled with zeros (`0.0`).
+    /// Creates a new tensor filled with uniform random values in `[0.0, 1.0)` using a fixed seed for determinism.
     ///
     /// # Errors
     ///
     /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
-    pub fn zeros(shape: [usize; D]) -> Result<Self, TensorError> {
+    pub fn rand_seeded(shape: [usize; D], seed: u64) -> Result<Self, TensorError> {
+        Self::uniform_seeded(0.0, 1.0, shape, seed)
+    }
+
+    /// Creates a new tensor with uniform random values in the range `[low, high)`.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    /// - Returns [`TensorError::UniformError`] if `low >= high` or parameters are not finite.
+    pub fn uniform(low: f32, high: f32, shape: [usize; D]) -> Result<Self, TensorError> {
+        Self::uniform_with_rng(low, high, shape, rand::rng())
+    }
+
+    /// Creates a new tensor with uniform random values in `[low, high)` using a fixed seed for determinism.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    /// - Returns [`TensorError::UniformError`] if `low >= high` or parameters are not finite.
+    pub fn uniform_seeded(
+        low: f32,
+        high: f32,
+        shape: [usize; D],
+        seed: u64,
+    ) -> Result<Self, TensorError> {
+        use rand::SeedableRng;
+        let rng = rand::rngs::StdRng::seed_from_u64(seed);
+        Self::uniform_with_rng(low, high, shape, rng)
+    }
+
+    /// Creates a new tensor with uniform random values in `[low, high)` using a custom random number generator.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    /// - Returns [`TensorError::UniformError`] if `low >= high` or parameters are not finite.
+    pub fn uniform_with_rng<R: rand::Rng>(
+        low: f32,
+        high: f32,
+        shape: [usize; D],
+        mut rng: R,
+    ) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
+
+        let uniform = Uniform::new(low, high)?;
+        let num_elements: usize = shape.iter().product();
+        let data: Vec<f32> = uniform.sample_iter(&mut rng).take(num_elements).collect();
 
         // let device = device.unwrap_or_default(); //uncomment this
         // For now just use CPU as default
         let device = Device::default(); //TODO: Must change this back when designing the public API
-        let num_elements: usize = shape.iter().product();
         let storage = match device {
-            Device::Cpu => Storage::Cpu(vec![0.0; num_elements]),
+            Device::Cpu => Storage::Cpu(data),
             //TODO: Update once more storage options are implemented (20261014-114506)
         };
 
@@ -297,6 +331,141 @@ impl<const D: usize> Tensor<D> {
             strides,
             device,
         })
+    }
+
+    /// Computes the 1D flat storage offset corresponding to the given multi-dimensional coordinate indices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::IndexOutOfBounds`] if any coordinate is greater than or equal to
+    /// the dimension size along that axis.
+    pub fn linear_index(&self, indices: [usize; D]) -> Result<usize, TensorError> {
+        let mut flat_index = self.offset;
+        // index is the actual value, i is the axis
+        for (i, &index) in indices.iter().enumerate().take(D) {
+            if index >= self.shape[i] {
+                return Err(TensorError::IndexOutOfBounds {
+                    axis: i,
+                    index: index,
+                    size: self.shape[i],
+                });
+            }
+            flat_index += index * self.strides[i];
+        }
+
+        Ok(flat_index)
+    }
+
+    /// Returns a tensor that is a transposed version of `self`, with dimensions `dim0` and `dim1` swapped.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::IndexOutOfBounds`] if `dim0` or `dim1` is greater than or equal to the number of dimensions `D`.
+    pub fn transpose(&self, dim0: usize, dim1: usize) -> Result<Self, TensorError> {
+        if dim0 >= D || dim1 >= D {
+            return Err(TensorError::IndexOutOfBounds {
+                axis: dim0.max(dim1),
+                index: dim0.max(dim1),
+                size: D,
+            });
+        }
+
+        let mut shape = self.shape;
+        let mut strides = self.strides;
+
+        shape.swap(dim0, dim1);
+        strides.swap(dim0, dim1);
+
+        Ok(Self {
+            storage: Arc::clone(&self.storage),
+            shape,
+            strides,
+            offset: self.offset,
+            device: self.device,
+        })
+    }
+
+    /// Computes canonical row-major (C-contiguous) strides for the given shape.
+    fn compute_strides(shape: &[usize; D]) -> Result<[usize; D], TensorError> {
+        //WARN: No support for 0-sized dimensions. (shapes with 0 in it)
+        // eg: creating a tensor with shape [2,0,3] will result in runtime error, 0 must NOT be in
+        // shape.
+        // This is to make development of Tensor methods easier and reduce edge cases involving 0
+
+        //TODO: remove this check after supporting 0-sized dimensions (20261015-130759)
+        if shape.contains(&0) {
+            return Err(TensorError::ZeroSizedDimension {
+                shape: shape.to_vec(),
+            });
+        }
+
+        let mut strides = [1; D];
+        if D > 1 {
+            for i in (0..D - 1).rev() {
+                strides[i] = strides[i + 1] * shape[i + 1];
+            } //NOTE: refer ./tasks/20261014-021101/strides.png
+        }
+
+        Ok(strides)
+    }
+
+    /// Recursively formats tensor elements across dimensions with PyTorch-style aligned indentation.
+    fn format_dim(
+        &self,
+        f: &mut fmt::Formatter<'_>,
+        dim: usize,
+        coords: &mut [usize; D],
+        indent: usize,
+    ) -> fmt::Result {
+        write!(f, "[")?;
+        if dim == D - 1 {
+            for i in 0..self.shape[dim] {
+                coords[dim] = i;
+                if i > 0 {
+                    write!(f, ", ")?;
+                }
+                let idx = self.linear_index(*coords).map_err(|_| fmt::Error)?;
+                let val = match &*self.storage {
+                    Storage::Cpu(data) => data[idx],
+                };
+                if val.is_sign_negative() {
+                    write!(f, "{:.4}", val)?;
+                } else {
+                    write!(f, " {:.4}", val)?;
+                }
+            }
+        } else {
+            for i in 0..self.shape[dim] {
+                coords[dim] = i;
+                if i > 0 {
+                    if dim == D - 2 {
+                        write!(f, ",\n")?;
+                    } else {
+                        write!(f, ",\n\n")?;
+                    }
+                    write!(f, "{:width$}", "", width = indent + 1)?;
+                }
+                self.format_dim(f, dim + 1, coords, indent + 1)?;
+            }
+        }
+        write!(f, "]")
+    }
+}
+
+impl<const D: usize> fmt::Display for Tensor<D> {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "tensor(")?;
+        if D == 0 {
+            let idx = self.linear_index([0; D]).map_err(|_| fmt::Error)?;
+            let val = match &*self.storage {
+                Storage::Cpu(data) => data[idx],
+            };
+            write!(f, "{:.4}", val)?;
+        } else {
+            let mut coords = [0; D];
+            self.format_dim(f, 0, &mut coords, 7)?;
+        }
+        write!(f, ")")
     }
 }
 
@@ -470,4 +639,127 @@ fn test_tensor_seeded_deterministic() {
 
     // Different seeds must produce different values
     assert_ne!(*t1.storage, *t3.storage);
+}
+
+#[test]
+fn test_tensor_transpose() {
+    let t = Tensor::<2>::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]).unwrap();
+    let transposed = t.transpose(0, 1).unwrap();
+
+    assert_eq!(transposed.shape, [3, 2]);
+    assert_eq!(transposed.strides, [1, 3]);
+
+    // Out of bounds transpose error test
+    assert!(t.transpose(0, 2).is_err());
+    assert!(t.transpose(2, 0).is_err());
+}
+
+#[test]
+fn test_tensor_transpose_higher_dimensions() {
+    let data: Vec<f32> = (0..24).map(|x| x as f32).collect();
+    let t = Tensor::<3>::from_vec(data, [2, 3, 4]).unwrap();
+
+    // Default strides for shape [2, 3, 4] should be [12, 4, 1]
+    let transposed = t.transpose(0, 2).unwrap();
+    assert_eq!(transposed.shape, [4, 3, 2]);
+    assert_eq!(transposed.strides, [1, 4, 12]);
+
+    let transposed_inner = t.transpose(1, 2).unwrap();
+    assert_eq!(transposed_inner.shape, [2, 4, 3]);
+    assert_eq!(transposed_inner.strides, [12, 1, 4]);
+
+    // Out of bounds transpose error test
+    assert!(t.transpose(0, 3).is_err());
+    assert!(t.transpose(3, 1).is_err());
+}
+
+#[test]
+fn test_tensor_rand() {
+    let t = Tensor::<2>::rand([10, 20]).unwrap();
+    let data = match &*t.storage {
+        Storage::Cpu(vec) => vec,
+    };
+
+    // Every value must be within [0.0, 1.0)
+    for &val in data {
+        assert!(val >= 0.0 && val < 1.0, "Value {val} out of bounds");
+    }
+
+    // Mean of uniform [0, 1) should be roughly 0.5
+    let mean = data.iter().sum::<f32>() / data.len() as f32;
+    assert!((mean - 0.5).abs() < 0.1, "Mean was {mean}");
+}
+
+#[test]
+fn test_tensor_uniform() {
+    let t = Tensor::<2>::uniform(-2.0, 5.0, [10, 20]).unwrap();
+    let data = match &*t.storage {
+        Storage::Cpu(vec) => vec,
+    };
+
+    // Every value must be within [-2.0, 5.0)
+    for &val in data {
+        assert!(val >= -2.0 && val < 5.0, "Value {val} out of bounds");
+    }
+
+    // Invalid bounds (low >= high) should return an error
+    assert!(Tensor::<2>::uniform(5.0, 2.0, [2, 2]).is_err());
+}
+
+#[test]
+fn test_tensor_rand_seeded() {
+    let t1 = Tensor::<2>::rand_seeded([4, 4], 12345).unwrap();
+    let t2 = Tensor::<2>::rand_seeded([4, 4], 12345).unwrap();
+    let t3 = Tensor::<2>::rand_seeded([4, 4], 54321).unwrap();
+
+    // Same seed yields identical values
+    assert_eq!(*t1.storage, *t2.storage);
+
+    // Different seeds yield different values
+    assert_ne!(*t1.storage, *t3.storage);
+}
+
+#[test]
+fn test_tensor_display_scalar() {
+    let t = Tensor::from_vec(vec![3.14159], []).unwrap();
+    assert_eq!(format!("{t}"), "tensor(3.1416)");
+}
+
+#[test]
+fn test_tensor_display_1d() {
+    let t = Tensor::from_vec(vec![1.0, 2.5, -3.25], [3]).unwrap();
+    assert_eq!(format!("{t}"), "tensor([ 1.0000,  2.5000, -3.2500])");
+}
+
+#[test]
+fn test_tensor_display_2d() {
+    let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], [2, 2]).unwrap();
+    let expected = "\
+tensor([[ 1.0000,  2.0000],
+        [ 3.0000,  4.0000]])";
+    assert_eq!(format!("{t}"), expected);
+}
+
+#[test]
+fn test_tensor_display_2d_transposed() {
+    let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]).unwrap();
+    let transposed = t.transpose(0, 1).unwrap();
+    let expected = "\
+tensor([[ 1.0000,  4.0000],
+        [ 2.0000,  5.0000],
+        [ 3.0000,  6.0000]])";
+    assert_eq!(format!("{transposed}"), expected);
+}
+
+#[test]
+fn test_tensor_display_3d() {
+    let data: Vec<f32> = (1..=8).map(|x| x as f32).collect();
+    let t = Tensor::from_vec(data, [2, 2, 2]).unwrap();
+    let expected = "\
+tensor([[[ 1.0000,  2.0000],
+         [ 3.0000,  4.0000]],
+
+        [[ 5.0000,  6.0000],
+         [ 7.0000,  8.0000]]])";
+    assert_eq!(format!("{t}"), expected);
 }

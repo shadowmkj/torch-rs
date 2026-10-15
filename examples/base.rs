@@ -1,8 +1,12 @@
 use torch_rs::tensor::Tensor;
 
 fn main() -> anyhow::Result<()> {
-    let tensor = Tensor::<3>::randn([10, 30, 100]).unwrap();
+    let tensor = Tensor::randn([2, 2]).unwrap();
+    let transposed = tensor.transpose(0, 1).unwrap();
+    println!("Original:\n{tensor}\n");
+    println!("Transposed:\n{transposed}");
 
-    println!("{:?}", tensor);
+    println!("Original:\n{:?}\n", tensor);
+    println!("Transposed:\n{:?}", tensor);
     Ok(())
 }
