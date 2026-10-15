@@ -353,7 +353,7 @@ impl<const D: usize> Tensor<D> {
             if index >= self.shape[i] {
                 return Err(TensorError::IndexOutOfBounds {
                     axis: i,
-                    index: index,
+                    index,
                     size: self.shape[i],
                 });
             }
@@ -446,9 +446,9 @@ impl<const D: usize> Tensor<D> {
                 coords[dim] = i;
                 if i > 0 {
                     if dim == D - 2 {
-                        write!(f, ",\n")?;
+                        writeln!(f, ",")?;
                     } else {
-                        write!(f, ",\n\n")?;
+                        writeln!(f, ",\n")?;
                     }
                     write!(f, "{:width$}", "", width = indent + 1)?;
                 }
@@ -456,6 +456,19 @@ impl<const D: usize> Tensor<D> {
             }
         }
         write!(f, "]")
+    }
+}
+
+impl Tensor<2> {
+    /// Returns the transpose of a 2D tensor, swapping dimensions 0 and 1.
+    ///
+    /// This is a convenience shortcut for [`transpose(0, 1)`](Tensor::transpose).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError`] if transposing fails.
+    pub fn t(&self) -> Result<Tensor<2>, TensorError> {
+        self.transpose(0, 1)
     }
 }
 
