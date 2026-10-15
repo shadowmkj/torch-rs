@@ -1,6 +1,6 @@
 # Implement basic Tensor
 
-- STATUS: OPEN
+- STATUS: CLOSED
 - PRIORITY: 100
 - TAGS: tensor, core
 

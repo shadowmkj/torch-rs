@@ -1,5 +1,7 @@
 pub mod error;
 
+use rand_distr::{Distribution, Normal};
+
 use crate::tensor::error::TensorError;
 use std::sync::Arc;
 
@@ -12,7 +14,7 @@ pub enum Device {
 }
 
 /// Physical memory buffer storing raw numerical elements across backends.
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Storage {
     /// Contiguous heap-allocated vector in host memory.
     Cpu(Vec<f32>),
@@ -219,6 +221,83 @@ impl<const D: usize> Tensor<D> {
             device,
         })
     }
+
+    /// Creates a new tensor of the given shape with a standard normal distribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn randn(shape: [usize; D]) -> Result<Self, TensorError> {
+        Self::normal(0.0, 1.0, shape)
+    }
+
+    /// Creates a new tensor with a standard normal distribution using a fixed seed for determinism.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn randn_seeded(shape: [usize; D], seed: u64) -> Result<Self, TensorError> {
+        Self::normal_seeded(0.0, 1.0, shape, seed)
+    }
+
+    /// Creates a new tensor of the given shape with a normal distribution.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn normal(mean: f32, std_dev: f32, shape: [usize; D]) -> Result<Self, TensorError> {
+        Self::normal_with_rng(mean, std_dev, shape, rand::rng())
+    }
+
+    /// Creates a new tensor with a normal distribution using a fixed seed for determinism.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn normal_seeded(
+        mean: f32,
+        std_dev: f32,
+        shape: [usize; D],
+        seed: u64,
+    ) -> Result<Self, TensorError> {
+        use rand::SeedableRng;
+        let rng = rand::rngs::StdRng::seed_from_u64(seed);
+        Self::normal_with_rng(mean, std_dev, shape, rng)
+    }
+
+    /// Creates a new tensor with a normal distribution using a custom random number generator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    pub fn normal_with_rng<R: rand::Rng>(
+        mean: f32,
+        std_dev: f32,
+        shape: [usize; D],
+        mut rng: R,
+    ) -> Result<Self, TensorError> {
+        let strides = Self::compute_strides(&shape)?;
+
+        let normal = Normal::new(mean, std_dev)?;
+        let num_elements: usize = shape.iter().product();
+        let data: Vec<f32> = normal.sample_iter(&mut rng).take(num_elements).collect();
+
+        // let device = device.unwrap_or_default(); //uncomment this
+        // For now just use CPU as default
+        let device = Device::default(); //TODO: Must change this back when designing the public API
+        let storage = match device {
+            Device::Cpu => Storage::Cpu(data),
+            //TODO: Update once more storage options are implemented (20261014-114506)
+        };
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            shape,
+            offset: 0,
+            strides,
+            device,
+        })
+    }
 }
 
 #[test]
@@ -346,4 +425,49 @@ fn test_storage_sharing_on_view() -> Result<(), TensorError> {
     assert!(Arc::ptr_eq(&t1.storage, &t2.storage));
 
     Ok(())
+}
+
+#[test]
+fn test_tensor_normal() {
+    let tensor = Tensor::<1>::normal(0.0, 1.0, [10_000]).unwrap();
+    let data = match &*tensor.storage {
+        Storage::Cpu(vec) => vec,
+    };
+
+    let mean = data.iter().sum::<f32>() / data.len() as f32;
+    let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / data.len() as f32;
+    let std_dev = variance.sqrt();
+
+    // Check that mean is roughly 0.0 and std_dev is roughly 1.0
+    assert!((mean - 0.0).abs() < 0.05, "Mean was {mean}");
+    assert!((std_dev - 1.0).abs() < 0.05, "Std dev was {std_dev}");
+}
+
+#[test]
+fn test_tensor_randn() {
+    let tensor = Tensor::<3>::randn([5, 30, 100]).unwrap();
+    let data = match &*tensor.storage {
+        Storage::Cpu(vec) => vec,
+    };
+
+    let mean = data.iter().sum::<f32>() / data.len() as f32;
+    let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / data.len() as f32;
+    let std_dev = variance.sqrt();
+
+    // Check that mean is roughly 0.0 and std_dev is roughly 1.0
+    assert!((mean - 0.0).abs() < 0.05, "Mean was {mean}");
+    assert!((std_dev - 1.0).abs() < 0.05, "Std dev was {std_dev}");
+}
+
+#[test]
+fn test_tensor_seeded_deterministic() {
+    let t1 = Tensor::<2>::randn_seeded([3, 4], 42).unwrap();
+    let t2 = Tensor::<2>::randn_seeded([3, 4], 42).unwrap();
+    let t3 = Tensor::<2>::randn_seeded([3, 4], 999).unwrap();
+
+    // Identical seeds must produce bit-for-bit identical storage values
+    assert_eq!(*t1.storage, *t2.storage);
+
+    // Different seeds must produce different values
+    assert_ne!(*t1.storage, *t3.storage);
 }

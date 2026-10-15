@@ -34,4 +34,6 @@ pub enum TensorError {
 
     #[error("device mismatch: operation between {lhs:?} and {rhs:?}")]
     DeviceMismatch { lhs: String, rhs: String },
+    #[error(transparent)]
+    NormalError(#[from] rand_distr::NormalError),
 }
