@@ -3,14 +3,18 @@ pub mod error;
 use crate::tensor::error::TensorError;
 use std::sync::Arc;
 
+/// Hardware execution device for tensor storage and compute kernels.
 #[derive(Debug, Copy, Clone, Default)]
 pub enum Device {
+    /// Host CPU device using standard memory allocation.
     #[default]
     Cpu,
 }
 
+/// Physical memory buffer storing raw numerical elements across backends.
 #[derive(Debug, Clone)]
 pub enum Storage {
+    /// Contiguous heap-allocated vector in host memory.
     Cpu(Vec<f32>),
     //TODO: add more storage (Metal, CUDA, wgpu) (20261014-114506)
 }
@@ -23,6 +27,11 @@ impl PartialEq<Vec<f32>> for Storage {
     }
 }
 
+/// An `N`-dimensional array of numerical values with strided memory layout and shared storage.
+///
+/// The rank `D` is verified at compile-time via const generics, while dimensions
+/// and strides are stored in fixed-size stack arrays without heap allocation.
+///
 /// # Errors
 ///
 /// Returns [`TensorError::ZeroSizedDimension`] if any dimension is `0`.
@@ -37,6 +46,7 @@ pub struct Tensor<const D: usize> {
 }
 
 impl<const D: usize> Tensor<D> {
+    /// Computes canonical row-major (C-contiguous) strides for the given shape.
     fn compute_strides(shape: &[usize; D]) -> Result<[usize; D], TensorError> {
         //WARN: No support for 0-sized dimensions. (shapes with 0 in it)
         // eg: creating a tensor with shape [2,0,3] will result in runtime error, 0 must NOT be in
@@ -60,6 +70,12 @@ impl<const D: usize> Tensor<D> {
         Ok(strides)
     }
 
+    /// Computes the 1D flat storage offset corresponding to the given multi-dimensional coordinate indices.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::IndexOutOfBounds`] if any coordinate is greater than or equal to
+    /// the dimension size along that axis.
     pub fn linear_index(&self, indices: [usize; D]) -> Result<usize, TensorError> {
         let mut flat_index = self.offset;
         for i in 0..D {
@@ -76,6 +92,13 @@ impl<const D: usize> Tensor<D> {
         Ok(flat_index)
     }
 
+    /// Creates a new tensor from an owned vector of `f32` elements with the specified shape.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    /// - Returns [`TensorError::ElementCountMismatch`] if the number of elements in `data`
+    ///   does not match the total product of the dimensions.
     pub fn from_vec(data: Vec<f32>, shape: [usize; D]) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
         // let device = device.unwrap_or_default(); //uncomment this
@@ -106,6 +129,13 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
+    /// Creates a new tensor by copying elements from a slice with the specified shape.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
+    /// - Returns [`TensorError::ElementCountMismatch`] if the slice length does not match
+    ///   the total product of the dimensions.
     pub fn from_slice(slice: &[f32], shape: [usize; D]) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
 
@@ -137,6 +167,11 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
+    /// Creates a new tensor of the given shape filled with ones (`1.0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
     pub fn ones(shape: [usize; D]) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
 
@@ -158,6 +193,11 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
+    /// Creates a new tensor of the given shape filled with zeros (`0.0`).
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if any dimension in `shape` is `0`.
     pub fn zeros(shape: [usize; D]) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
 
