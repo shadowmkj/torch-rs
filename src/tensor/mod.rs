@@ -106,6 +106,58 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
+    pub fn from_slice(slice: &[f32], shape: [usize; D]) -> Result<Self, TensorError> {
+        let strides = Self::compute_strides(&shape)?;
+
+        // let device = device.unwrap_or_default(); //uncomment this
+        // For now just use CPU as default
+        let device = Device::default(); //TODO: Must change this back when designing the public API
+
+        // Shape must match the input data
+        let num_elements: usize = shape.iter().product();
+        if slice.len() != num_elements {
+            return Err(TensorError::ElementCountMismatch {
+                shape: shape.to_vec(),
+                expected: num_elements,
+                actual: slice.len(),
+            });
+        }
+
+        let storage = match device {
+            Device::Cpu => Storage::Cpu(Vec::from(slice)),
+            //TODO: Update once more storage options are implemented (20261014-114506)
+        };
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            shape,
+            offset: 0,
+            strides,
+            device,
+        })
+    }
+
+    pub fn ones(shape: [usize; D]) -> Result<Self, TensorError> {
+        let strides = Self::compute_strides(&shape)?;
+
+        // let device = device.unwrap_or_default(); //uncomment this
+        // For now just use CPU as default
+        let device = Device::default(); //TODO: Must change this back when designing the public API
+        let num_elements: usize = shape.iter().product();
+        let storage = match device {
+            Device::Cpu => Storage::Cpu(vec![1.0; num_elements]),
+            //TODO: Update once more storage options are implemented (20261014-114506)
+        };
+
+        Ok(Self {
+            storage: Arc::new(storage),
+            shape,
+            offset: 0,
+            strides,
+            device,
+        })
+    }
+
     pub fn zeros(shape: [usize; D]) -> Result<Self, TensorError> {
         let strides = Self::compute_strides(&shape)?;
 
@@ -129,7 +181,7 @@ impl<const D: usize> Tensor<D> {
 }
 
 #[test]
-fn basic_tensor() {
+fn test_basic_tensor() {
     let tensor = Tensor::zeros([2, 3]).unwrap();
     assert_eq!(tensor.shape, [2, 3]);
     assert_eq!(tensor.offset, 0);
@@ -137,11 +189,38 @@ fn basic_tensor() {
 }
 
 #[test]
-fn unit_tensor() {
+fn test_tensor_zeros() {
+    let tensor = Tensor::zeros([2, 3]).unwrap();
+    assert_eq!(*tensor.storage, vec![0.0, 0.0, 0.0, 0.0, 0.0, 0.0]);
+    assert_eq!(tensor.shape, [2, 3]);
+    assert_eq!(tensor.offset, 0);
+    assert_eq!(tensor.strides, [3, 1]);
+}
+
+#[test]
+fn test_tensor_ones() {
+    let tensor = Tensor::ones([2, 3]).unwrap();
+    assert_eq!(*tensor.storage, vec![1.0, 1.0, 1.0, 1.0, 1.0, 1.0]);
+    assert_eq!(tensor.shape, [2, 3]);
+    assert_eq!(tensor.offset, 0);
+    assert_eq!(tensor.strides, [3, 1]);
+}
+
+#[test]
+fn test_unit_tensor() {
     let tensor = Tensor::from_vec(vec![1.0], []).unwrap();
     assert_eq!(tensor.shape, []);
     assert_eq!(tensor.offset, 0);
     assert_eq!(tensor.strides, []);
+}
+
+#[test]
+fn test_tensor_from_slice() {
+    let data = vec![1.0, 2.0, 3.0, 4.0];
+    let tensor = Tensor::from_slice(&data, [2, 2]).unwrap();
+    assert_eq!(*tensor.storage, vec![1.0, 2.0, 3.0, 4.0]);
+    assert_eq!(tensor.offset, 0);
+    assert_eq!(tensor.strides, [2, 1]);
 }
 
 #[test]
