@@ -1,5 +1,11 @@
+//! Error types and failure modes for tensor operations.
+//!
+//! This module defines [`TensorError`], the central error enum used across all
+//! tensor initializations, memory layout calculations, view transformations, and indexing operations.
+
 use thiserror::Error;
 
+/// Errors that can occur during tensor creation, transformation, or indexing.
 #[non_exhaustive]
 #[derive(Error, Debug, PartialEq)]
 pub enum TensorError {

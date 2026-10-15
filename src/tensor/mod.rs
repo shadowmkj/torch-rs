@@ -1,7 +1,30 @@
+//! Multi-dimensional strided tensor abstraction and operations.
+//!
+//! A [`Tensor<const D: usize>`] represents an `N`-dimensional array of 32-bit floating-point
+//! values with a strided memory layout.
+//!
+//! ## Mathematical Layout
+//!
+//! Tensors map multi-dimensional coordinates `(i_0, i_1, ..., i_{D-1})` to a flat 1D
+//! storage offset using:
+//!
+//! ```text
+//! linear_index(i_0, ..., i_{D-1}) = offset + sum_{k=0}^{D-1} (i_k * strides[k])
+//! ```
+//!
+//! ## Key Capabilities
+//!
+//! - **Constant & Vector Initializers**: [`Tensor::zeros`], [`Tensor::ones`], [`Tensor::from_vec`], [`Tensor::from_slice`].
+//! - **Random Distributions**: Uniform distributions ([`Tensor::rand`], [`Tensor::uniform`]) and
+//!   Gaussian distributions ([`Tensor::randn`], [`Tensor::normal`]), with seeded deterministic options.
+//! - **Zero-Copy Views**: [`Tensor::transpose`] creates a new view into the same underlying storage
+//!   by swapping shape and stride dimensions in `O(1)` time without copying data.
+
 pub mod error;
 
 use rand_distr::{Distribution, Normal, Uniform};
 
+use crate::storage::Storage;
 use crate::tensor::error::TensorError;
 use std::fmt;
 use std::sync::Arc;
@@ -12,22 +35,6 @@ pub enum Device {
     /// Host CPU device using standard memory allocation.
     #[default]
     Cpu,
-}
-
-/// Physical memory buffer storing raw numerical elements across backends.
-#[derive(Debug, Clone, PartialEq)]
-pub enum Storage {
-    /// Contiguous heap-allocated vector in host memory.
-    Cpu(Vec<f32>),
-    //TODO: add more storage (Metal, CUDA, wgpu) (20261014-114506)
-}
-
-impl PartialEq<Vec<f32>> for Storage {
-    fn eq(&self, other: &Vec<f32>) -> bool {
-        match self {
-            Storage::Cpu(items) => items == other,
-        }
-    }
 }
 
 /// An `N`-dimensional array of numerical values with strided memory layout and shared storage.
