@@ -78,15 +78,16 @@ impl<const D: usize> Tensor<D> {
     /// the dimension size along that axis.
     pub fn linear_index(&self, indices: [usize; D]) -> Result<usize, TensorError> {
         let mut flat_index = self.offset;
-        for i in 0..D {
-            if indices[i] >= self.shape[i] {
+        // index is the actual value, i is the axis
+        for (i, &index) in indices.iter().enumerate().take(D) {
+            if index >= self.shape[i] {
                 return Err(TensorError::IndexOutOfBounds {
                     axis: i,
-                    index: indices[i],
+                    index: index,
                     size: self.shape[i],
                 });
             }
-            flat_index += indices[i] * self.strides[i];
+            flat_index += index * self.strides[i];
         }
 
         Ok(flat_index)
@@ -122,7 +123,7 @@ impl<const D: usize> Tensor<D> {
 
         Ok(Self {
             storage: Arc::new(storage),
-            shape: shape,
+            shape,
             offset: 0,
             strides,
             device,
