@@ -49,13 +49,31 @@ pub enum Device {
 #[derive(Debug, Clone)]
 pub struct Tensor<const D: usize> {
     storage: Arc<Storage>,
-    shape: [usize; D],
+    pub shape: [usize; D],
     strides: [usize; D],
     offset: usize,
     device: Device,
 }
 
 impl<const D: usize> Tensor<D> {
+    /// Returns a reference to the tensor's shape.
+    #[inline]
+    pub fn shape(&self) -> &[usize; D] {
+        &self.shape
+    }
+
+    /// Returns a reference to the tensor's strides.
+    #[inline]
+    pub fn strides(&self) -> &[usize; D] {
+        &self.strides
+    }
+
+    /// Returns the storage offset of the tensor.
+    #[inline]
+    pub fn offset(&self) -> usize {
+        self.offset
+    }
+
     /// Creates a new tensor of the given shape filled with zeros (`0.0`).
     ///
     /// # Errors
@@ -338,6 +356,92 @@ impl<const D: usize> Tensor<D> {
             strides,
             device,
         })
+    }
+
+    /// Returns a new tensor that is a narrowed view of `self` along `dim`
+    /// from index `start` (inclusive) to `end` (exclusive).
+    ///
+    /// This is an O(1) zero-copy operation that adjusts the storage offset and dimension size.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::IndexOutOfBounds`] if `dim >= D` or `end > self.shape[dim]`.
+    /// - Returns [`TensorError::InvalidSliceRange`] if `start > end`.
+    /// - Returns [`TensorError::ZeroSizedDimension`] if `start == end` (while zero-sized shapes are
+    ///  unsupported).
+    pub fn slice(&self, dim: usize, start: usize, end: usize) -> Result<Self, TensorError> {
+        if dim >= D {
+            return Err(TensorError::IndexOutOfBounds {
+                axis: dim,
+                index: dim,
+                size: D,
+            });
+        }
+
+        if start > end {
+            return Err(TensorError::InvalidSliceRange {
+                axis: dim,
+                start,
+                end,
+                size: self.shape[dim],
+            });
+        }
+
+        if end > self.shape[dim] {
+            return Err(TensorError::IndexOutOfBounds {
+                axis: dim,
+                index: end,
+                size: self.shape[dim],
+            });
+        }
+
+        let new_dim_size = end - start;
+        if new_dim_size == 0 {
+            let mut new_shape = self.shape.to_vec();
+            new_shape[dim] = 0;
+            return Err(TensorError::ZeroSizedDimension { shape: new_shape });
+        }
+
+        let mut shape = self.shape;
+        shape[dim] = new_dim_size;
+
+        let offset = self.offset + start * self.strides[dim];
+
+        Ok(Self {
+            storage: Arc::clone(&self.storage),
+            shape,
+            strides: self.strides,
+            offset,
+            device: self.device,
+        })
+    }
+
+    pub fn compaction(&self) -> Result<usize, TensorError> {
+        todo!()
+    }
+
+    /// Return `true` if the tensor elements are stored contiguosly in standard row-major order.
+    pub fn is_contiguous(&self) -> bool {
+        // Strides must match the expected strides for new a new tensor
+        match Self::compute_strides(&self.shape) {
+            Ok(expected_strides) => expected_strides == self.strides,
+            Err(_) => false,
+        }
+    }
+
+    pub fn reshape<const R: usize>(&self, new_shape: [usize; R]) -> Result<Self, TensorError> {
+        // The count of elements must match
+        let current_shape_element_count: usize = self.shape.iter().product();
+        let new_shape_element_count: usize = new_shape.iter().product();
+        if current_shape_element_count != new_shape_element_count {
+            return Err(TensorError::ElementCountMismatch {
+                shape: new_shape.to_vec(),
+                expected: current_shape_element_count,
+                actual: new_shape_element_count,
+            });
+        }
+
+        todo!()
     }
 
     /// Computes the 1D flat storage offset corresponding to the given multi-dimensional coordinate indices.
@@ -782,4 +886,188 @@ tensor([[[ 1.0000,  2.0000],
         [[ 5.0000,  6.0000],
          [ 7.0000,  8.0000]]])";
     assert_eq!(format!("{t}"), expected);
+}
+
+#[test]
+fn test_is_contiguous() {
+    // Newly created tensor is contiguous
+    let t = Tensor::zeros([2, 3]).unwrap();
+    assert!(t.is_contiguous());
+
+    // Transposed tensor is NOT contiguous (strides become [1, 3] instead of [3, 1])
+    let transposed = t.transpose(0, 1).unwrap();
+    assert!(!transposed.is_contiguous());
+
+    // Slicing along dimension 0 remains contiguous
+    // (a contiguous block from offset to end)
+    let slice_dim0 = t.slice(0, 0, 1).unwrap();
+    assert!(slice_dim0.is_contiguous());
+
+    // 4. Slicing along inner dimensions leaves memory gaps -> NOT contiguous
+    let slice_dim1 = t.slice(1, 0, 2).unwrap();
+    assert!(!slice_dim1.is_contiguous());
+}
+#[test]
+fn test_slice_1d() -> Result<(), TensorError> {
+    // Original: [10.0, 20.0, 30.0, 40.0, 50.0]
+    let t = Tensor::from_vec(vec![10.0, 20.0, 30.0, 40.0, 50.0], [5])?;
+
+    // Slice [1..4] -> [20.0, 30.0, 40.0]
+    let s = t.slice(0, 1, 4)?;
+
+    assert_eq!(s.shape(), &[3]);
+    assert_eq!(s.offset(), 1);
+    assert_eq!(s.strides(), &[1]);
+    assert_eq!(format!("{s}"), "tensor([ 20.0000,  30.0000,  40.0000])");
+
+    Ok(())
+}
+
+#[test]
+fn test_slice_2d_dim0() -> Result<(), TensorError> {
+    // 3x2 matrix:
+    // [[ 1.0, 2.0 ],
+    //  [ 3.0, 4.0 ],
+    //  [ 5.0, 6.0 ]]
+    let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let t = Tensor::from_vec(data, [3, 2])?;
+
+    // Slice rows 1..3 -> [[3.0, 4.0], [5.0, 6.0]]
+    let s = t.slice(0, 1, 3)?;
+
+    assert_eq!(s.shape(), &[2, 2]);
+    assert_eq!(s.offset(), 2); // row 1 starts at index 1 * stride[0] = 1 * 2 = 2
+    assert_eq!(s.strides(), &[2, 1]); // strides remain unchanged
+
+    let expected = "\
+tensor([[ 3.0000,  4.0000],
+        [ 5.0000,  6.0000]])";
+    assert_eq!(format!("{s}"), expected);
+
+    Ok(())
+}
+
+#[test]
+fn test_slice_2d_dim1() -> Result<(), TensorError> {
+    // 2x3 matrix:
+    // [[ 1.0, 2.0, 3.0 ],
+    //  [ 4.0, 5.0, 6.0 ]]
+    let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let t = Tensor::from_vec(data, [2, 3])?;
+
+    // Slice columns 1..3 -> columns 1 and 2 of each row
+    // [[ 2.0, 3.0 ],
+    //  [ 5.0, 6.0 ]]
+    let s = t.slice(1, 1, 3)?;
+
+    assert_eq!(s.shape(), &[2, 2]);
+    assert_eq!(s.offset(), 1); // column 1 starts at index 1 * stride[1] = 1 * 1 = 1
+    assert_eq!(s.strides(), &[3, 1]); // strides remain unchanged
+
+    let expected = "\
+tensor([[ 2.0000,  3.0000],
+        [ 5.0000,  6.0000]])";
+    assert_eq!(format!("{s}"), expected);
+
+    Ok(())
+}
+
+#[test]
+fn test_slice_chained() -> Result<(), TensorError> {
+    // 3x3 matrix:
+    // [[ 1.0, 2.0, 3.0 ],
+    //  [ 4.0, 5.0, 6.0 ],
+    //  [ 7.0, 8.0, 9.0 ]]
+    let data: Vec<f32> = (1..=9).map(|x| x as f32).collect();
+    let t = Tensor::from_vec(data, [3, 3])?;
+
+    // Slice rows 1..3, then columns 1..3 -> bottom-right 2x2:
+    // [[ 5.0, 6.0 ],
+    //  [ 8.0, 9.0 ]]
+    let s = t.slice(0, 1, 3)?.slice(1, 1, 3)?;
+
+    assert_eq!(s.shape(), &[2, 2]);
+    assert_eq!(s.offset(), 4); // row 1 (1*3=3) + col 1 (1*1=1) = offset 4
+
+    let expected = "\
+tensor([[ 5.0000,  6.0000],
+        [ 8.0000,  9.0000]])";
+    assert_eq!(format!("{s}"), expected);
+
+    Ok(())
+}
+
+#[test]
+fn test_slice_zero_copy_storage_sharing() -> Result<(), TensorError> {
+    let t = Tensor::zeros([4, 4])?;
+    let s = t.slice(0, 1, 3)?;
+
+    // Both views point to the exact same physical Storage buffer
+    assert!(Arc::ptr_eq(&t.storage, &s.storage));
+    Ok(())
+}
+
+#[test]
+fn test_slice_error_dim_out_of_bounds() -> Result<(), TensorError> {
+    let t = Tensor::zeros([2, 3])?;
+
+    // dim 2 is out of bounds for a 2D tensor (valid dims: 0, 1)
+    let res = t.slice(2, 0, 1);
+    assert_eq!(
+        res.unwrap_err(),
+        TensorError::IndexOutOfBounds {
+            axis: 2,
+            index: 2,
+            size: 2,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_slice_error_start_greater_than_end() -> Result<(), TensorError> {
+    let t = Tensor::zeros([5])?;
+
+    // start (3) > end (1) is an invalid range
+    let res = t.slice(0, 3, 1);
+    assert_eq!(
+        res.unwrap_err(),
+        TensorError::InvalidSliceRange {
+            axis: 0,
+            start: 3,
+            end: 1,
+            size: 5,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_slice_error_end_out_of_bounds() -> Result<(), TensorError> {
+    let t = Tensor::zeros([4])?;
+
+    // end (5) exceeds dimension size (4)
+    let res = t.slice(0, 1, 5);
+    assert_eq!(
+        res.unwrap_err(),
+        TensorError::IndexOutOfBounds {
+            axis: 0,
+            index: 5,
+            size: 4,
+        }
+    );
+    Ok(())
+}
+
+#[test]
+fn test_slice_error_zero_sized() -> Result<(), TensorError> {
+    let t = Tensor::zeros([3, 3])?;
+
+    // start == end results in length 0 (which torch-rs currently rejects)
+    let res = t.slice(0, 1, 1);
+    assert_eq!(
+        res.unwrap_err(),
+        TensorError::ZeroSizedDimension { shape: vec![0, 3] }
+    );
+    Ok(())
 }

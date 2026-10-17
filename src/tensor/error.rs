@@ -25,6 +25,14 @@ pub enum TensorError {
         size: usize,
     },
 
+    #[error("invalid slice range [{start}..{end}] for axis {axis} with size {size}")]
+    InvalidSliceRange {
+        axis: usize,
+        start: usize,
+        end: usize,
+        size: usize,
+    },
+
     #[error("coordinate count ({provided}) does not match tensor rank ({expected})")]
     RankMismatch { expected: usize, provided: usize },
 
