@@ -21,6 +21,7 @@
 //!   by swapping shape and stride dimensions in `O(1)` time without copying data.
 
 pub mod error;
+pub mod iterator;
 
 use rand_distr::{Distribution, Normal, Uniform};
 
@@ -62,6 +63,12 @@ impl<const D: usize> Tensor<D> {
         &self.shape
     }
 
+    /// Returns the number of elements in the tensor.
+    #[inline]
+    pub fn numel(&self) -> usize {
+        self.shape.iter().product::<usize>()
+    }
+
     /// Returns a reference to the tensor's strides.
     #[inline]
     pub fn strides(&self) -> &[usize; D] {
@@ -72,6 +79,12 @@ impl<const D: usize> Tensor<D> {
     #[inline]
     pub fn offset(&self) -> usize {
         self.offset
+    }
+
+    /// Return the `f32` value at the coordinates.
+    pub fn get(&self, coords: [usize; D]) -> Result<f32, TensorError> {
+        //TODO: Must return the value at coords
+        unimplemented!()
     }
 
     /// Creates a new tensor of the given shape filled with zeros (`0.0`).
@@ -416,7 +429,19 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
+    /// Returns a new contiguous tensor with elements copied into a fresh, compact storage layout.
+    ///
+    /// If the tensor is already compact (contiguous row-major layout with zero offset spanning
+    /// the full storage buffer), this creates an identical compact representation. Otherwise,
+    /// elements are gathered according to current strides and offset into a newly allocated buffer.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError`] if allocating storage or computing strides fails.
     pub fn compaction(&self) -> Result<Tensor<D>, TensorError> {
+        if self.is_compact() {
+            return Ok(self.clone());
+        }
         //TODO: implement compaction for tensor (20261022-190359)
         todo!()
     }
