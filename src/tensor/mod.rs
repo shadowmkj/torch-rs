@@ -856,9 +856,7 @@ fn test_storage_sharing_on_view() -> Result<(), TensorError> {
 #[test]
 fn test_tensor_normal() {
     let tensor = Tensor::<1>::normal(0.0, 1.0, [10_000]).unwrap();
-    let data = match &*tensor.storage {
-        Storage::Cpu(vec) => vec,
-    };
+    let Storage::Cpu(data) = &*tensor.storage;
 
     let mean = data.iter().sum::<f32>() / data.len() as f32;
     let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / data.len() as f32;
@@ -872,9 +870,7 @@ fn test_tensor_normal() {
 #[test]
 fn test_tensor_randn() {
     let tensor = Tensor::<3>::randn([5, 30, 100]).unwrap();
-    let data = match &*tensor.storage {
-        Storage::Cpu(vec) => vec,
-    };
+    let Storage::Cpu(data) = &*tensor.storage;
 
     let mean = data.iter().sum::<f32>() / data.len() as f32;
     let variance = data.iter().map(|x| (x - mean).powi(2)).sum::<f32>() / data.len() as f32;
@@ -933,13 +929,11 @@ fn test_tensor_transpose_higher_dimensions() {
 #[test]
 fn test_tensor_rand() {
     let t = Tensor::<2>::rand([10, 20]).unwrap();
-    let data = match &*t.storage {
-        Storage::Cpu(vec) => vec,
-    };
+    let Storage::Cpu(data) = &*t.storage;
 
     // Every value must be within [0.0, 1.0)
     for &val in data {
-        assert!(val >= 0.0 && val < 1.0, "Value {val} out of bounds");
+        assert!((0.0..1.0).contains(&val), "Value {val} out of bounds");
     }
 
     // Mean of uniform [0, 1) should be roughly 0.5
@@ -950,13 +944,11 @@ fn test_tensor_rand() {
 #[test]
 fn test_tensor_uniform() {
     let t = Tensor::<2>::uniform(-2.0, 5.0, [10, 20]).unwrap();
-    let data = match &*t.storage {
-        Storage::Cpu(vec) => vec,
-    };
+    let Storage::Cpu(data) = &*t.storage;
 
     // Every value must be within [-2.0, 5.0)
     for &val in data {
-        assert!(val >= -2.0 && val < 5.0, "Value {val} out of bounds");
+        assert!((-2.0..5.0).contains(&val), "Value {val} out of bounds");
     }
 
     // Invalid bounds (low >= high) should return an error
@@ -978,6 +970,7 @@ fn test_tensor_rand_seeded() {
 
 #[test]
 fn test_tensor_display_scalar() {
+    #[allow(clippy::approx_constant)]
     let t = Tensor::from_vec(vec![3.14159], []).unwrap();
     assert_eq!(format!("{t}"), "tensor(3.1416)");
 }
@@ -1226,6 +1219,7 @@ fn test_numel() -> Result<(), TensorError> {
 }
 
 #[test]
+#[allow(clippy::approx_constant)]
 fn test_get() -> Result<(), TensorError> {
     let data = vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
     let t = Tensor::from_vec(data, [2, 3])?;
@@ -1242,6 +1236,7 @@ fn test_get() -> Result<(), TensorError> {
     assert!(t.get([0, 3]).is_err());
 
     // Scalar get
+    #[allow(clippy::approx_constant)]
     let scalar = Tensor::from_vec(vec![3.14], [])?;
     assert_eq!(scalar.get([])?, 3.14);
 
