@@ -642,6 +642,33 @@ impl Tensor<2> {
     }
 }
 
+impl Tensor<1> {
+    /// Creates a 1D tensor by collecting values from an iterator.
+    ///
+    /// The length of the resulting 1D tensor matches the number of elements
+    /// yielded by the iterator.
+    ///
+    /// # Errors
+    ///
+    /// Returns [`TensorError::ZeroSizedDimension`] if the iterator yields 0 elements,
+    /// as zero-sized dimensions are currently unsupported.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use torch_rs::tensor::Tensor;
+    ///
+    /// let t = Tensor::from_iter(vec![1.0, 2.0, 3.0]).unwrap();
+    /// assert_eq!(t.shape(), &[3]);
+    /// assert_eq!(t.numel(), 3);
+    /// ```
+    pub fn from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Result<Self, TensorError> {
+        let data: Vec<f32> = iter.into_iter().collect();
+        let len = data.len();
+        Self::from_vec(data, [len])
+    }
+}
+
 impl<const D: usize> fmt::Display for Tensor<D> {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         write!(f, "tensor(")?;
