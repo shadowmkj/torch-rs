@@ -482,6 +482,36 @@ impl<const D: usize> Tensor<D> {
         }
     }
 
+    /// Returns a new tensor reshaped to `new_shape`.
+    ///
+    /// The total number of elements in `new_shape` must exactly match the number of elements
+    /// in the current tensor (`self.numel()`).
+    ///
+    /// - If the tensor is already compact ([`is_compact`](Tensor::is_compact)), this is an `O(1)`
+    ///   zero-copy operation sharing the underlying [`Storage`](crate::storage::Storage).
+    /// - If the tensor is non-compact (e.g. after [`transpose`](Tensor::transpose) or strided slicing),
+    ///   elements are gathered into a new compact storage buffer via [`compaction`](Tensor::compaction)
+    ///   before returning the reshaped tensor.
+    ///
+    /// # Errors
+    ///
+    /// - Returns [`TensorError::ElementCountMismatch`] if the product of `new_shape` dimensions
+    ///   does not equal `self.numel()`.
+    /// - Returns [`TensorError::ZeroSizedDimension`] if any dimension in `new_shape` is `0`.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use torch_rs::tensor::Tensor;
+    ///
+    /// let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3]).unwrap();
+    /// let reshaped = t.reshape([3, 2]).unwrap();
+    /// assert_eq!(reshaped.shape(), &[3, 2]);
+    ///
+    /// // Reshaping to different ranks:
+    /// let flat = t.reshape([6]).unwrap();
+    /// assert_eq!(flat.shape(), &[6]);
+    /// ```
     pub fn reshape<const R: usize>(&self, new_shape: [usize; R]) -> Result<Tensor<R>, TensorError> {
         // The count of elements must match
         let current_shape_element_count: usize = self.shape.iter().product();

@@ -1,5 +1,11 @@
+//! Iterator implementations for [`Tensor`].
+//!
+//! Provides scalar row-major iterators to traverse tensor elements
+//! across arbitrary dimensions and strides.
+
 use crate::tensor::Tensor;
 
+/// An iterator over the scalar elements of a [`Tensor`] in row-major order.
 pub struct Iter<'a, const D: usize> {
     tensor: &'a Tensor<D>,
     coords: [usize; D],
@@ -36,6 +42,17 @@ impl<'a, const D: usize> Iterator for Iter<'a, D> {
 }
 
 impl<const D: usize> Tensor<D> {
+    /// Returns an iterator over the scalar elements of the tensor in row-major order.
+    ///
+    /// # Examples
+    ///
+    /// ```
+    /// use torch_rs::tensor::Tensor;
+    ///
+    /// let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], [2, 2]).unwrap();
+    /// let values: Vec<f32> = t.iter().collect();
+    /// assert_eq!(values, vec![1.0, 2.0, 3.0, 4.0]);
+    /// ```
     pub fn iter(&self) -> Iter<'_, D> {
         Iter {
             tensor: self,
