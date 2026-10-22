@@ -442,8 +442,9 @@ impl<const D: usize> Tensor<D> {
         if self.is_compact() {
             return Ok(self.clone());
         }
-        //TODO: implement compaction for tensor (20261022-190359)
-        todo!()
+
+        let new_data: Vec<f32> = self.iter().collect();
+        Self::from_vec(new_data, self.shape)
     }
 
     /// Return `true` if the tensor elements are stored contiguosly in standard row-major order.
