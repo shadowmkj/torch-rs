@@ -50,7 +50,7 @@ pub enum Device {
 #[derive(Debug, Clone)]
 pub struct Tensor<const D: usize> {
     storage: Arc<Storage>,
-    pub shape: [usize; D],
+    shape: [usize; D],
     strides: [usize; D],
     offset: usize,
     device: Device,
@@ -83,8 +83,10 @@ impl<const D: usize> Tensor<D> {
 
     /// Return the `f32` value at the coordinates.
     pub fn get(&self, coords: [usize; D]) -> Result<f32, TensorError> {
-        //TODO: Must return the value at coords
-        unimplemented!()
+        let idx = self.linear_index(coords)?;
+        match &*self.storage {
+            Storage::Cpu(data) => Ok(data[idx]),
+        }
     }
 
     /// Creates a new tensor of the given shape filled with zeros (`0.0`).
@@ -1134,5 +1136,162 @@ fn test_slice_error_zero_sized() -> Result<(), TensorError> {
         res.unwrap_err(),
         TensorError::ZeroSizedDimension { shape: vec![0, 3] }
     );
+    Ok(())
+}
+
+#[test]
+fn test_numel() -> Result<(), TensorError> {
+    let t0 = Tensor::from_vec(vec![42.0], [])?;
+    assert_eq!(t0.numel(), 1);
+
+    let t1 = Tensor::zeros([5])?;
+    assert_eq!(t1.numel(), 5);
+
+    let t2 = Tensor::zeros([2, 3])?;
+    assert_eq!(t2.numel(), 6);
+
+    let t3 = Tensor::zeros([2, 3, 4])?;
+    assert_eq!(t3.numel(), 24);
+
+    let s = t2.slice(0, 1, 2)?;
+    assert_eq!(s.numel(), 3);
+
+    Ok(())
+}
+
+#[test]
+fn test_get() -> Result<(), TensorError> {
+    let data = vec![10.0, 20.0, 30.0, 40.0, 50.0, 60.0];
+    let t = Tensor::from_vec(data, [2, 3])?;
+
+    assert_eq!(t.get([0, 0])?, 10.0);
+    assert_eq!(t.get([0, 1])?, 20.0);
+    assert_eq!(t.get([0, 2])?, 30.0);
+    assert_eq!(t.get([1, 0])?, 40.0);
+    assert_eq!(t.get([1, 1])?, 50.0);
+    assert_eq!(t.get([1, 2])?, 60.0);
+
+    // Out of bounds check
+    assert!(t.get([2, 0]).is_err());
+    assert!(t.get([0, 3]).is_err());
+
+    // Scalar get
+    let scalar = Tensor::from_vec(vec![3.14], [])?;
+    assert_eq!(scalar.get([])?, 3.14);
+
+    Ok(())
+}
+
+#[test]
+fn test_iterator_contiguous() -> Result<(), TensorError> {
+    let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let t = Tensor::from_vec(data.clone(), [2, 3])?;
+
+    // Check size_hint and exact size
+    let iter = t.iter();
+    assert_eq!(iter.size_hint(), (6, Some(6)));
+
+    // Elements collected in row-major order
+    let collected: Vec<f32> = t.iter().collect();
+    assert_eq!(collected, data);
+
+    // IntoIterator test for &Tensor
+    let mut values = Vec::new();
+    for val in &t {
+        values.push(val);
+    }
+    assert_eq!(values, data);
+
+    Ok(())
+}
+
+#[test]
+fn test_iterator_non_contiguous() -> Result<(), TensorError> {
+    // 2x3 matrix:
+    // [[ 1.0, 2.0, 3.0 ],
+    //  [ 4.0, 5.0, 6.0 ]]
+    let data = vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0];
+    let t = Tensor::from_vec(data, [2, 3])?;
+
+    // Transposed to 3x2:
+    // [[ 1.0, 4.0 ],
+    //  [ 2.0, 5.0 ],
+    //  [ 3.0, 6.0 ]]
+    let transposed = t.transpose(0, 1)?;
+    let collected: Vec<f32> = transposed.iter().collect();
+    assert_eq!(collected, vec![1.0, 4.0, 2.0, 5.0, 3.0, 6.0]);
+
+    // Slice columns 1..3 of 2x3 -> 2x2:
+    // [[ 2.0, 3.0 ],
+    //  [ 5.0, 6.0 ]]
+    let sliced = t.slice(1, 1, 3)?;
+    let collected_slice: Vec<f32> = sliced.iter().collect();
+    assert_eq!(collected_slice, vec![2.0, 3.0, 5.0, 6.0]);
+
+    Ok(())
+}
+
+#[test]
+fn test_is_compact() -> Result<(), TensorError> {
+    // Freshly created tensors are compact
+    let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3])?;
+    assert!(t.is_compact());
+
+    // Transpose changes strides -> not compact
+    let transposed = t.transpose(0, 1)?;
+    assert!(!transposed.is_compact());
+
+    // Slice along dim 0: offset != 0 or trailing unused buffer -> not compact
+    let row_slice = t.slice(0, 1, 2)?;
+    assert!(!row_slice.is_compact());
+
+    // Slice along dim 1: gaps in memory -> not compact
+    let col_slice = t.slice(1, 0, 2)?;
+    assert!(!col_slice.is_compact());
+
+    Ok(())
+}
+
+#[test]
+fn test_compaction() -> Result<(), TensorError> {
+    // 1. Compaction on already compact tensor returns identical storage (shared Arc)
+    let compact_t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0], [2, 2])?;
+    let compacted_same = compact_t.compaction()?;
+    assert!(compacted_same.is_compact());
+    assert!(Arc::ptr_eq(&compact_t.storage, &compacted_same.storage));
+
+    // 2. Compaction on non-contiguous transposed tensor creates new compact storage
+    let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [2, 3])?;
+    let transposed = t.transpose(0, 1)?; // shape [3, 2]
+    assert!(!transposed.is_compact());
+
+    let compacted = transposed.compaction()?;
+    assert!(compacted.is_compact());
+    assert_eq!(compacted.shape(), &[3, 2]);
+    assert_eq!(compacted.strides(), &[2, 1]);
+    assert_eq!(compacted.offset(), 0);
+    assert!(!Arc::ptr_eq(&transposed.storage, &compacted.storage));
+
+    let expected = "\
+tensor([[ 1.0000,  4.0000],
+        [ 2.0000,  5.0000],
+        [ 3.0000,  6.0000]])";
+    assert_eq!(format!("{compacted}"), expected);
+
+    // 3. Compaction on sliced tensor
+    let sliced = t.slice(1, 1, 3)?; // 2x2 with offset 1 and strides [3, 1]
+    assert!(!sliced.is_compact());
+
+    let compacted_slice = sliced.compaction()?;
+    assert!(compacted_slice.is_compact());
+    assert_eq!(compacted_slice.shape(), &[2, 2]);
+    assert_eq!(compacted_slice.strides(), &[2, 1]);
+    assert_eq!(compacted_slice.offset(), 0);
+
+    let expected_slice = "\
+tensor([[ 2.0000,  3.0000],
+        [ 5.0000,  6.0000]])";
+    assert_eq!(format!("{compacted_slice}"), expected_slice);
+
     Ok(())
 }
