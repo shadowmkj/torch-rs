@@ -488,7 +488,7 @@ impl<const D: usize> Tensor<D> {
     /// in the current tensor (`self.numel()`).
     ///
     /// - If the tensor is already compact ([`is_compact`](Tensor::is_compact)), this is an `O(1)`
-    ///   zero-copy operation sharing the underlying [`Storage`](crate::storage::Storage).
+    ///   zero-copy operation sharing the underlying [`Storage`].
     /// - If the tensor is non-compact (e.g. after [`transpose`](Tensor::transpose) or strided slicing),
     ///   elements are gathered into a new compact storage buffer via [`compaction`](Tensor::compaction)
     ///   before returning the reshaped tensor.
@@ -678,6 +678,14 @@ impl Tensor<1> {
     /// The length of the resulting 1D tensor matches the number of elements
     /// yielded by the iterator.
     ///
+    /// # Note on Standard Trait
+    ///
+    /// This method is an inherent function rather than an implementation of the
+    /// standard [`std::iter::FromIterator`] trait. The standard trait method
+    /// `FromIterator::from_iter` cannot return a [`Result`], which would require panicking
+    /// on empty iterators because zero-sized dimensions are currently unsupported.
+    /// This method returns a [`Result`] to preserve explicit error handling.
+    ///
     /// # Errors
     ///
     /// Returns [`TensorError::ZeroSizedDimension`] if the iterator yields 0 elements,
@@ -692,6 +700,7 @@ impl Tensor<1> {
     /// assert_eq!(t.shape(), &[3]);
     /// assert_eq!(t.numel(), 3);
     /// ```
+    #[allow(clippy::should_implement_trait)]
     pub fn from_iter<I: IntoIterator<Item = f32>>(iter: I) -> Result<Self, TensorError> {
         let data: Vec<f32> = iter.into_iter().collect();
         let len = data.len();

@@ -1,12 +1,20 @@
 use torch_rs::tensor::Tensor;
 
 fn main() -> anyhow::Result<()> {
-    let tensor = Tensor::randn([2, 2, 2]).unwrap();
-    let transposed = tensor.transpose(0, 1)?;
-    println!("Original:\n{tensor}\n");
-    println!("Transposed:\n{transposed}");
+    let t = Tensor::from_vec(vec![1.0, 2.0, 3.0, 4.0, 5.0, 6.0], [3, 2])?;
 
-    println!("Original:\n{:?}\n", tensor);
-    println!("Transposed:\n{:?}", tensor);
+    let random = Tensor::normal(100f32, 20f32, [2, 2, 12, 4, 8])?;
+
+    let reshaped = random.reshape([32, 12, 4])?;
+    let mean = random.iter().sum::<f32>() / random.numel() as f32;
+
+    // println!("base = {}", random);
+    // println!("reshaped = {}", reshaped);
+    // println!("linear = {}", linear);
+    println!("mean = {}", mean);
+    for i in &random {
+        println!("{}", i);
+    }
+
     Ok(())
 }
