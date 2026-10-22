@@ -429,6 +429,30 @@ impl<const D: usize> Tensor<D> {
         }
     }
 
+    /// Returns `true` if the tensor is contiguous in memory and starts at offset 0,
+    /// spanning the storage from its beginning without any offset or slicing gaps.
+    pub fn is_compact(&self) -> bool {
+        if self.offset != 0 {
+            return false;
+        }
+
+        let size: usize = self.shape().iter().product();
+
+        let storage_size = match &*self.storage {
+            Storage::Cpu(items) => items.len(),
+        };
+
+        if size != storage_size {
+            return false;
+        }
+
+        // Strides must match the expected strides for new a new tensor
+        match Self::compute_strides(&self.shape) {
+            Ok(expected_strides) => expected_strides == self.strides,
+            Err(_) => false,
+        }
+    }
+
     pub fn reshape<const R: usize>(&self, new_shape: [usize; R]) -> Result<Self, TensorError> {
         // The count of elements must match
         let current_shape_element_count: usize = self.shape.iter().product();
@@ -441,6 +465,7 @@ impl<const D: usize> Tensor<D> {
             });
         }
 
+        // TODO: Implement reshape method (20261022-182018)
         todo!()
     }
 
@@ -642,6 +667,7 @@ fn test_compute_strides_dimensions() -> Result<(), TensorError> {
     assert_eq!(Tensor::compute_strides(&[5])?, [1]);
     assert_eq!(Tensor::compute_strides(&[2, 3])?, [3, 1]);
     assert_eq!(Tensor::compute_strides(&[2, 3, 4])?, [12, 4, 1]);
+    assert_eq!(Tensor::compute_strides(&[1, 5])?, [5, 1]);
 
     Ok(())
 }
