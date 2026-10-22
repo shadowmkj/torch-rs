@@ -368,7 +368,7 @@ impl<const D: usize> Tensor<D> {
     /// - Returns [`TensorError::IndexOutOfBounds`] if `dim >= D` or `end > self.shape[dim]`.
     /// - Returns [`TensorError::InvalidSliceRange`] if `start > end`.
     /// - Returns [`TensorError::ZeroSizedDimension`] if `start == end` (while zero-sized shapes are
-    ///  unsupported).
+    ///   unsupported).
     pub fn slice(&self, dim: usize, start: usize, end: usize) -> Result<Self, TensorError> {
         if dim >= D {
             return Err(TensorError::IndexOutOfBounds {
@@ -416,7 +416,8 @@ impl<const D: usize> Tensor<D> {
         })
     }
 
-    pub fn compaction(&self) -> Result<usize, TensorError> {
+    pub fn compaction(&self) -> Result<Tensor<D>, TensorError> {
+        //TODO: implement compaction for tensor (20261022-190359)
         todo!()
     }
 
@@ -453,7 +454,7 @@ impl<const D: usize> Tensor<D> {
         }
     }
 
-    pub fn reshape<const R: usize>(&self, new_shape: [usize; R]) -> Result<Self, TensorError> {
+    pub fn reshape<const R: usize>(&self, new_shape: [usize; R]) -> Result<Tensor<R>, TensorError> {
         // The count of elements must match
         let current_shape_element_count: usize = self.shape.iter().product();
         let new_shape_element_count: usize = new_shape.iter().product();
@@ -465,8 +466,20 @@ impl<const D: usize> Tensor<D> {
             });
         }
 
-        // TODO: Implement reshape method (20261022-182018)
-        todo!()
+        let base = if self.is_compact() {
+            self.clone()
+        } else {
+            self.compaction()?
+        };
+
+        let new_strides = Tensor::<R>::compute_strides(&new_shape)?;
+        Ok(Tensor {
+            storage: Arc::clone(&base.storage),
+            shape: new_shape,
+            strides: new_strides,
+            offset: 0,
+            device: self.device,
+        })
     }
 
     /// Computes the 1D flat storage offset corresponding to the given multi-dimensional coordinate indices.

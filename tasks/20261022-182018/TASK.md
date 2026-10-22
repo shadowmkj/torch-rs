@@ -1,6 +1,6 @@
 # Reshape method for Tensor
 
-- STATUS: OPEN
+- STATUS: CLOSED
 - PRIORITY: 100
 - TAGS: core,tensor
 
